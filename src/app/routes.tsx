@@ -14,23 +14,51 @@ import { SignupPage } from '@/pages/auth/SignupPage';
 import { SetupPage } from '@/pages/auth/SetupPage';
 import { PublicInvitePage } from '@/pages/public/PublicInvitePage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import { useAuth } from '@/app/context/AuthContext';
 
 export const AppRoutes: React.FC = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+
   return (
     <Routes>
-      {/* Root redirect */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Root redirect based on authentication */}
+      <Route
+        path="/"
+        element={
+          isLoading ? null : isAuthenticated ? (
+            <Navigate to="/dashboard" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
 
       {/* Public Auth Routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
-      <Route path="/setup" element={<SetupPage />} />
 
       {/* Public Digital Invitation with RSVP */}
       <Route path="/invite/:slug" element={<PublicInvitePage />} />
 
+      {/* Protected Setup Wizard Route */}
+      <Route
+        path="/setup"
+        element={
+          <ProtectedRoute>
+            <SetupPage />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Protected Dashboard Workspace Routes */}
-      <Route element={<DashboardLayout />}>
+      <Route
+        element={
+          <ProtectedRoute>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/tasks-events" element={<TasksEventsPage />} />

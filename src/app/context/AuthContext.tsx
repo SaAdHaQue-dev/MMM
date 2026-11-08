@@ -9,38 +9,68 @@ interface AuthContextType {
   familySide: FamilySide;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, passwordOrRole?: string | UserRole, familySide?: FamilySide) => Promise<void>;
-  signup: (email: string, fullName: string, passwordOrRole?: string | UserRole, familySide?: FamilySide) => Promise<void>;
+  login: (email: string, password?: string, role?: UserRole, familySide?: FamilySide) => Promise<void>;
+  signup: (email: string, password?: string, fullName?: string, role?: UserRole, familySide?: FamilySide) => Promise<void>;
   logout: () => Promise<void>;
 }
-
-const defaultProfile: Profile = {
-  id: 'usr_demo_admin_01',
-  fullName: 'Arjun Verma',
-  phone: '+91 98765 43210',
-  createdAt: new Date().toISOString(),
-};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<Profile | null>(isSupabaseConfigured ? null : defaultProfile);
+  const [user, setUser] = useState<Profile | null>(null);
   const [role, setRole] = useState<UserRole>('wedding_admin');
   const [familySide, setFamilySide] = useState<FamilySide>('groom');
-  const [isLoading, setIsLoading] = useState<boolean>(isSupabaseConfigured);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setIsLoading(false);
-      return;
-    }
-
     let isMounted = true;
 
     async function initializeSession() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user && isMounted) {
+        if (isSupabaseConfigured) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user && isMounted) {
+            const profile = await authService.getProfile(session.user.id);
+            setUser({
+              id: session.user.id,
+              fullName: profile?.full_name || session.user.user_metadata?.full_name || session.user.email || 'Wedding Member',
+              phone: profile?.phone || session.user.user_metadata?.phone,
+              avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url,
+              createdAt: profile?.created_at || session.user.created_at,
+            });
+            const savedRole = localStorage.getItem('mmm_user_role') as UserRole;
+            const savedSide = localStorage.getItem('mmm_family_side') as FamilySide;
+            if (savedRole) setRole(savedRole);
+            if (savedSide) setFamilySide(savedSide);
+            return;
+          }
+        }
+
+        // Restore demo user if previously logged in via demo mode
+        const demoUser = localStorage.getItem('mmm_demo_user');
+        if (demoUser && isMounted) {
+          try {
+            setUser(JSON.parse(demoUser));
+            const savedRole = localStorage.getItem('mmm_user_role') as UserRole;
+            const savedSide = localStorage.getItem('mmm_family_side') as FamilySide;
+            if (savedRole) setRole(savedRole);
+            if (savedSide) setFamilySide(savedSide);
+          } catch {
+            localStorage.removeItem('mmm_demo_user');
+          }
+        }
+      } catch (err) {
+        console.error('Error restoring session:', err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    initializeSession();
+
+    if (isSupabaseConfigured) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (session?.user) {
           const profile = await authService.getProfile(session.user.id);
           setUser({
             id: session.user.id,
@@ -49,106 +79,107 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url,
             createdAt: profile?.created_at || session.user.created_at,
           });
+        } else {
+          // If no active supabase session and no demo user, log out
+          if (!localStorage.getItem('mmm_demo_user')) {
+            setUser(null);
+          }
         }
-      } catch (err) {
-        console.error('Error restoring Supabase session:', err);
-      } finally {
-        if (isMounted) setIsLoading(false);
-      }
-    }
+        setIsLoading(false);
+      });
 
-    initializeSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        const profile = await authService.getProfile(session.user.id);
-        setUser({
-          id: session.user.id,
-          fullName: profile?.full_name || session.user.user_metadata?.full_name || session.user.email || 'Wedding Member',
-          phone: profile?.phone || session.user.user_metadata?.phone,
-          avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url,
-          createdAt: profile?.created_at || session.user.created_at,
-        });
-      } else {
-        setUser(null);
-      }
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
+    } else {
       setIsLoading(false);
-    });
-
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
+    }
   }, []);
 
-  const login = async (email: string, passwordOrRole: string | UserRole = 'wedding_admin', customSide: FamilySide = 'groom') => {
+  const login = async (
+    email: string,
+    password?: string,
+    customRole: UserRole = 'wedding_admin',
+    customSide: FamilySide = 'groom'
+  ) => {
     setIsLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        // If password is provided (e.g. at least 6 chars), authenticate via Supabase
-        const password = typeof passwordOrRole === 'string' && passwordOrRole.length >= 6 ? passwordOrRole : 'Password123!';
-        try {
-          const res = await authService.signIn(email, password);
-          if (res.user) {
-            const profile = await authService.getProfile(res.user.id);
-            setUser({
-              id: res.user.id,
-              fullName: profile?.full_name || email.split('@')[0],
-              createdAt: res.user.created_at,
-            });
-            return;
-          }
-        } catch (e) {
-          // If sign in fails on demo credentials, fallback gracefully for developer preview
-          console.warn('Supabase signIn attempted:', e);
+      if (isSupabaseConfigured && password && password.length >= 6) {
+        const res = await authService.signIn(email, password);
+        if (res.user) {
+          const profile = await authService.getProfile(res.user.id);
+          setUser({
+            id: res.user.id,
+            fullName: profile?.full_name || res.user.user_metadata?.full_name || email.split('@')[0],
+            phone: profile?.phone || res.user.user_metadata?.phone,
+            avatarUrl: profile?.avatar_url || res.user.user_metadata?.avatar_url,
+            createdAt: profile?.created_at || res.user.created_at,
+          });
+          setRole(customRole);
+          setFamilySide(customSide);
+          localStorage.setItem('mmm_user_role', customRole);
+          localStorage.setItem('mmm_family_side', customSide);
+          localStorage.removeItem('mmm_demo_user');
+          return;
         }
       }
 
-      // Demo/Fallback Mode
-      setUser({
+      // Demo login
+      const demoUser: Profile = {
         id: 'usr_' + Math.random().toString(36).substring(2, 9),
         fullName: email.split('@')[0].toUpperCase(),
         createdAt: new Date().toISOString(),
-      });
-      if (typeof passwordOrRole === 'string' && (passwordOrRole === 'wedding_admin' || passwordOrRole === 'family_admin' || passwordOrRole === 'family_member' || passwordOrRole === 'guest')) {
-        setRole(passwordOrRole as UserRole);
-      }
+      };
+      setUser(demoUser);
+      setRole(customRole);
       setFamilySide(customSide);
+      localStorage.setItem('mmm_demo_user', JSON.stringify(demoUser));
+      localStorage.setItem('mmm_user_role', customRole);
+      localStorage.setItem('mmm_family_side', customSide);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const signup = async (email: string, fullName: string, passwordOrRole: string | UserRole = 'wedding_admin', customSide: FamilySide = 'groom') => {
+  const signup = async (
+    email: string,
+    password?: string,
+    fullName?: string,
+    customRole: UserRole = 'wedding_admin',
+    customSide: FamilySide = 'groom'
+  ) => {
     setIsLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        const password = typeof passwordOrRole === 'string' && passwordOrRole.length >= 6 ? passwordOrRole : 'Password123!';
-        try {
-          const res = await authService.signUp(email, password, fullName);
-          if (res.user) {
-            setUser({
-              id: res.user.id,
-              fullName: fullName || email.split('@')[0],
-              createdAt: res.user.created_at,
-            });
-            return;
-          }
-        } catch (e) {
-          console.warn('Supabase signUp attempted:', e);
+      if (isSupabaseConfigured && password && password.length >= 6) {
+        const res = await authService.signUp(email, password, fullName || email.split('@')[0]);
+        if (res.user) {
+          setUser({
+            id: res.user.id,
+            fullName: fullName || email.split('@')[0],
+            createdAt: res.user.created_at,
+          });
+          setRole(customRole);
+          setFamilySide(customSide);
+          localStorage.setItem('mmm_user_role', customRole);
+          localStorage.setItem('mmm_family_side', customSide);
+          localStorage.removeItem('mmm_demo_user');
+          return;
         }
       }
 
-      // Demo/Fallback Mode
-      setUser({
+      // Demo signup
+      const demoUser: Profile = {
         id: 'usr_' + Math.random().toString(36).substring(2, 9),
         fullName: fullName || email.split('@')[0],
         createdAt: new Date().toISOString(),
-      });
-      if (typeof passwordOrRole === 'string' && (passwordOrRole === 'wedding_admin' || passwordOrRole === 'family_admin' || passwordOrRole === 'family_member' || passwordOrRole === 'guest')) {
-        setRole(passwordOrRole as UserRole);
-      }
+      };
+      setUser(demoUser);
+      setRole(customRole);
       setFamilySide(customSide);
+      localStorage.setItem('mmm_demo_user', JSON.stringify(demoUser));
+      localStorage.setItem('mmm_user_role', customRole);
+      localStorage.setItem('mmm_family_side', customSide);
     } finally {
       setIsLoading(false);
     }
@@ -158,9 +189,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       if (isSupabaseConfigured) {
-        await authService.signOut();
+        try {
+          await authService.signOut();
+        } catch (e) {
+          console.warn('Sign out warning:', e);
+        }
       }
       setUser(null);
+      localStorage.removeItem('mmm_demo_user');
+      localStorage.removeItem('mmm_user_role');
+      localStorage.removeItem('mmm_family_side');
     } finally {
       setIsLoading(false);
     }

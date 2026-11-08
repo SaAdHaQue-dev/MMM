@@ -31,7 +31,7 @@ export const SetupPage: React.FC = () => {
       venueAddress,
       totalBudget: parseFloat(totalBudget) || 2000000,
     });
-    await login('admin@wedding.com', 'wedding_admin', familySide);
+    await login('admin@wedding.com', undefined, 'wedding_admin', familySide);
     navigate('/dashboard');
   };
 
