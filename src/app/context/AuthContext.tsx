@@ -106,22 +106,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       if (isSupabaseConfigured && password && password.length >= 6) {
-        const res = await authService.signIn(email, password);
-        if (res.user) {
-          const profile = await authService.getProfile(res.user.id);
-          setUser({
-            id: res.user.id,
-            fullName: profile?.full_name || res.user.user_metadata?.full_name || email.split('@')[0],
-            phone: profile?.phone || res.user.user_metadata?.phone,
-            avatarUrl: profile?.avatar_url || res.user.user_metadata?.avatar_url,
-            createdAt: profile?.created_at || res.user.created_at,
-          });
-          setRole(customRole);
-          setFamilySide(customSide);
-          localStorage.setItem('mmm_user_role', customRole);
-          localStorage.setItem('mmm_family_side', customSide);
-          localStorage.removeItem('mmm_demo_user');
-          return;
+        try {
+          const res = await authService.signIn(email, password);
+          if (res.user) {
+            const profile = await authService.getProfile(res.user.id);
+            setUser({
+              id: res.user.id,
+              fullName: profile?.full_name || res.user.user_metadata?.full_name || email.split('@')[0],
+              phone: profile?.phone || res.user.user_metadata?.phone,
+              avatarUrl: profile?.avatar_url || res.user.user_metadata?.avatar_url,
+              createdAt: profile?.created_at || res.user.created_at,
+            });
+            setRole(customRole);
+            setFamilySide(customSide);
+            localStorage.setItem('mmm_user_role', customRole);
+            localStorage.setItem('mmm_family_side', customSide);
+            localStorage.removeItem('mmm_demo_user');
+            return;
+          }
+        } catch (e: any) {
+          // If email is not confirmed in Supabase Auth, allow developer preview session
+          if (e?.message?.toLowerCase().includes('email not confirmed')) {
+            console.warn('Supabase email not confirmed, allowing dev preview access');
+          } else {
+            throw e;
+          }
         }
       }
 
